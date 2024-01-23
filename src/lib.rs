@@ -247,21 +247,15 @@ where
     }
 
     /// Create a new instance of the QMP6988 device.
-    pub fn new(
-        i2c: I2C,
-        address: SevenBitAddress,
-        delay: D,
-        filter: IirFilter,
-        oversampling_setting: OverSamplingSetting,
-    ) -> Result<Self, Error<I2C::Error>> {
+    pub fn new(i2c: I2C, address: SevenBitAddress, delay: D) -> Result<Self, Error<I2C::Error>> {
         let mut device = Self {
             address,
             coe: Coe::default(),
             delay,
-            filter,
+            filter: IirFilter::default(),
             i2c,
             k: K::default(),
-            oversampling_setting,
+            oversampling_setting: OverSamplingSetting::default(),
         };
         device.check_device()?;
         device.get_calibration_data()?;
@@ -275,6 +269,22 @@ where
         self.i2c.write(self.address, RESET_REGISTER)?;
         self.delay.delay_ms(10);
         Ok(())
+    }
+
+    /// Define the IIR (Infinite Impulse Response) filter to use during the
+    /// measurements.
+    pub fn set_filter(&mut self, filter: IirFilter) -> Result<(), Error<I2C::Error>> {
+        self.filter = filter;
+        self.apply_filter()
+    }
+
+    /// Define the oversampling setting to use during the measurements.
+    pub fn set_oversampling_setting(
+        &mut self,
+        oversampling_setting: OverSamplingSetting,
+    ) -> Result<(), Error<I2C::Error>> {
+        self.oversampling_setting = oversampling_setting;
+        self.apply_measure_control_parameters()
     }
 
     /// Calculate the altitude (in m) from a measurement.
