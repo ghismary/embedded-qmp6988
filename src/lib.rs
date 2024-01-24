@@ -287,13 +287,6 @@ where
         self.apply_measure_control_parameters()
     }
 
-    /// Calculate the altitude (in m) from a measurement.
-    pub fn calculate_altitude(measurement: Measurement) -> f32 {
-        ((1_013.25 / measurement.pressure).powf(1.0 / 5.257) - 1.0)
-            * (measurement.temperature + 273.15)
-            / 0.0065
-    }
-
     fn apply_filter(&mut self) -> Result<(), Error<I2C::Error>> {
         let filter = [self.filter as u8];
         let mut operations = [
@@ -321,9 +314,17 @@ where
 
     fn apply_power_mode(&mut self, power_mode: PowerMode) -> Result<(), Error<I2C::Error>> {
         let mut data = [0u8; 1];
-        self.i2c.read(self.address, &mut data)?;
+        let mut operations = [
+            Operation::Write(CTRL_MEAS_REGISTER),
+            Operation::Read(&mut data),
+        ];
+        self.i2c.transaction(self.address, &mut operations)?;
         data[0] = (data[0] & 0xfc) | power_mode as u8;
-        self.i2c.write(self.address, &data)?;
+        let mut operations = [
+            Operation::Write(CTRL_MEAS_REGISTER),
+            Operation::Write(&data),
+        ];
+        self.i2c.transaction(self.address, &mut operations)?;
         self.delay.delay_ms(20);
         Ok(())
     }
@@ -398,9 +399,148 @@ where
     }
 }
 
+/// Calculate the altitude (in m) from a measurement.
+pub fn calculate_altitude(measurement: Measurement) -> f32 {
+    ((1_013.25 / measurement.pressure).powf(1.0 / 5.257) - 1.0) * (measurement.temperature + 273.15)
+        / 0.0065
+}
+
 #[cfg(test)]
 mod tests {
     use crate::*;
     use embedded_hal_mock::eh1::delay::StdSleep as Delay;
     use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTransaction};
+
+    fn create_device() -> Qmp6988<I2cMock, Delay> {
+        let expectations = [
+            I2cTransaction::transaction_start(DEFAULT_I2C_ADDRESS),
+            I2cTransaction::write(DEFAULT_I2C_ADDRESS, CHIP_ID_REGISTER.to_vec()),
+            I2cTransaction::read(DEFAULT_I2C_ADDRESS, [0x5c].to_vec()),
+            I2cTransaction::transaction_end(DEFAULT_I2C_ADDRESS),
+            I2cTransaction::transaction_start(DEFAULT_I2C_ADDRESS),
+            I2cTransaction::write(DEFAULT_I2C_ADDRESS, COE_B00_1_REGISTER.to_vec()),
+            I2cTransaction::read(
+                DEFAULT_I2C_ADDRESS,
+                [
+                    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+                    0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+                ]
+                .to_vec(),
+            ),
+            I2cTransaction::transaction_end(DEFAULT_I2C_ADDRESS),
+            I2cTransaction::transaction_start(DEFAULT_I2C_ADDRESS),
+            I2cTransaction::write(DEFAULT_I2C_ADDRESS, IIR_CNT_REGISTER.to_vec()),
+            I2cTransaction::write(DEFAULT_I2C_ADDRESS, [0x02].to_vec()),
+            I2cTransaction::transaction_end(DEFAULT_I2C_ADDRESS),
+            I2cTransaction::transaction_start(DEFAULT_I2C_ADDRESS),
+            I2cTransaction::write(DEFAULT_I2C_ADDRESS, CTRL_MEAS_REGISTER.to_vec()),
+            I2cTransaction::write(DEFAULT_I2C_ADDRESS, [0x30].to_vec()),
+            I2cTransaction::transaction_end(DEFAULT_I2C_ADDRESS),
+        ];
+        let i2c = I2cMock::new(&expectations);
+        let mut device = Qmp6988::new(i2c, DEFAULT_I2C_ADDRESS, Delay {}).unwrap();
+        device.i2c.done();
+        device
+    }
+
+    #[test]
+    fn calculate_altitude() {
+        assert!(
+            (crate::calculate_altitude(Measurement {
+                pressure: 991.32,
+                temperature: 20.55,
+            }) - 188.46)
+                .abs()
+                < 0.01
+        );
+        assert!(
+            (crate::calculate_altitude(Measurement {
+                pressure: 1013.25,
+                temperature: 17.93,
+            }) - 0.0)
+                .abs()
+                < 0.01
+        );
+        assert!(
+            (crate::calculate_altitude(Measurement {
+                pressure: 1013.25,
+                temperature: 37.5,
+            }) - 0.0)
+                .abs()
+                < 0.01
+        );
+        assert!(
+            (crate::calculate_altitude(Measurement {
+                pressure: 962.81,
+                temperature: 19.37,
+            }) - 439.25)
+                .abs()
+                < 0.01
+        );
+    }
+
+    #[test]
+    fn measure() {
+        let expectations = [
+            I2cTransaction::transaction_start(DEFAULT_I2C_ADDRESS),
+            I2cTransaction::write(DEFAULT_I2C_ADDRESS, CTRL_MEAS_REGISTER.to_vec()),
+            I2cTransaction::read(DEFAULT_I2C_ADDRESS, [0x30].to_vec()),
+            I2cTransaction::transaction_end(DEFAULT_I2C_ADDRESS),
+            I2cTransaction::transaction_start(DEFAULT_I2C_ADDRESS),
+            I2cTransaction::write(DEFAULT_I2C_ADDRESS, CTRL_MEAS_REGISTER.to_vec()),
+            I2cTransaction::write(DEFAULT_I2C_ADDRESS, [0x31].to_vec()),
+            I2cTransaction::transaction_end(DEFAULT_I2C_ADDRESS),
+            I2cTransaction::transaction_start(DEFAULT_I2C_ADDRESS),
+            I2cTransaction::write(DEFAULT_I2C_ADDRESS, PRESS_TXD2.to_vec()),
+            I2cTransaction::read(DEFAULT_I2C_ADDRESS, [0x00, 0x01, 0x02].to_vec()),
+            I2cTransaction::read(DEFAULT_I2C_ADDRESS, [0x00, 0x01, 0x02].to_vec()),
+            I2cTransaction::transaction_end(DEFAULT_I2C_ADDRESS),
+        ];
+        let mut device = create_device();
+        device.i2c.update_expectations(&expectations);
+        device.measure().unwrap();
+        device.i2c.done();
+    }
+
+    #[test]
+    fn reset() {
+        let expectations = [I2cTransaction::write(
+            DEFAULT_I2C_ADDRESS,
+            RESET_REGISTER.to_vec(),
+        )];
+        let mut device = create_device();
+        device.i2c.update_expectations(&expectations);
+        device.reset().unwrap();
+        device.i2c.done();
+    }
+
+    #[test]
+    fn set_filter() {
+        let expectations = [
+            I2cTransaction::transaction_start(DEFAULT_I2C_ADDRESS),
+            I2cTransaction::write(DEFAULT_I2C_ADDRESS, IIR_CNT_REGISTER.to_vec()),
+            I2cTransaction::write(DEFAULT_I2C_ADDRESS, [0x05].to_vec()),
+            I2cTransaction::transaction_end(DEFAULT_I2C_ADDRESS),
+        ];
+        let mut device = create_device();
+        device.i2c.update_expectations(&expectations);
+        device.set_filter(IirFilter::Coeff32).unwrap();
+        device.i2c.done();
+    }
+
+    #[test]
+    fn set_oversampling_setting() {
+        let expectations = [
+            I2cTransaction::transaction_start(DEFAULT_I2C_ADDRESS),
+            I2cTransaction::write(DEFAULT_I2C_ADDRESS, CTRL_MEAS_REGISTER.to_vec()),
+            I2cTransaction::write(DEFAULT_I2C_ADDRESS, [0x28].to_vec()),
+            I2cTransaction::transaction_end(DEFAULT_I2C_ADDRESS),
+        ];
+        let mut device = create_device();
+        device.i2c.update_expectations(&expectations);
+        device
+            .set_oversampling_setting(OverSamplingSetting::HighSpeed)
+            .unwrap();
+        device.i2c.done();
+    }
 }
