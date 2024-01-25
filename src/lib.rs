@@ -11,7 +11,7 @@ pub const I2C_ADDRESS_LOGIC_LOW: SevenBitAddress = 0x70;
 /// The I2C address when the SDO pin is connected to logic high
 pub const I2C_ADDRESS_LOGIC_HIGH: SevenBitAddress = 0x56;
 /// The default I2C address (SDO pin connected to low)
-pub const DEFAULT_I2C_ADDRESS: SevenBitAddress = I2C_ADDRESS_LOGIC_HIGH;
+pub const DEFAULT_I2C_ADDRESS: SevenBitAddress = I2C_ADDRESS_LOGIC_LOW;
 
 const CHIP_ID_REGISTER: &[u8] = &[0xd1];
 const COE_B00_1_REGISTER: &[u8] = &[0xa0];
