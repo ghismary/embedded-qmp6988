@@ -1,3 +1,9 @@
+[![crates.io](https://img.shields.io/crates/v/embedded-qmp6988.svg)](https://crates.io/crates/embedded-qmp6988)
+[![License](https://img.shields.io/crates/l/embedded-qmp6988.svg)](https://crates.io/crates/embedded-qmp6988)
+[![Documentation](https://docs.rs/embedded-qmp6988/badge.svg)](https://docs.rs/embedded-qmp6988)
+
+# embedded-qmp6988
+
 This is a platform agnostic Rust driver the QMP6988 digital barometric pressure
 sensor using the [`embedded-hal`] traits.
 
