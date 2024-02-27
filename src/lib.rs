@@ -2,9 +2,16 @@
 #![deny(unsafe_code, missing_docs)]
 #![no_std]
 
-use embedded_hal::i2c::{Operation, SevenBitAddress};
 #[allow(unused_imports)]
 use micromath::F32Ext;
+use weather_utils::{unit::Celcius, TemperatureAndBarometricPressure};
+
+#[cfg(not(feature = "async"))]
+use embedded_hal as hal;
+#[cfg(feature = "async")]
+use embedded_hal_async as hal;
+
+use hal::i2c::{Operation, SevenBitAddress};
 
 /// The I2C address when the SDO pin is connected to logic low
 pub const I2C_ADDRESS_LOGIC_LOW: SevenBitAddress = 0x70;
@@ -24,7 +31,7 @@ const RESET_REGISTER: u8 = 0xe0;
 #[derive(Debug)]
 pub enum Error<I2cE>
 where
-    I2cE: embedded_hal::i2c::Error,
+    I2cE: hal::i2c::Error,
 {
     /// I²C bus error
     I2c(I2cE),
@@ -36,7 +43,7 @@ where
 
 impl<I2cE> From<I2cE> for Error<I2cE>
 where
-    I2cE: embedded_hal::i2c::Error,
+    I2cE: hal::i2c::Error,
 {
     fn from(value: I2cE) -> Self {
         Error::I2c(value)
@@ -192,17 +199,6 @@ impl From<&Coe> for K {
     }
 }
 
-/// The result of a measurement.
-///
-/// Such a measurement can be obtained using [`Qmp6988::measure()`].
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Measurement {
-    /// The measured barometric pressure (in hPa).
-    pub pressure: f32,
-    /// The measured temperature (in °C).
-    pub temperature: f32,
-}
-
 /// QMP6988 device driver
 #[derive(Debug)]
 pub struct Qmp6988<I2C, D> {
@@ -217,34 +213,48 @@ pub struct Qmp6988<I2C, D> {
 
 impl<I2C, D> Qmp6988<I2C, D>
 where
-    I2C: embedded_hal::i2c::I2c,
-    D: embedded_hal::delay::DelayNs,
+    I2C: hal::i2c::I2c,
+    D: hal::delay::DelayNs,
 {
     /// Perform a measurement of pressure and temperature.
     ///
     /// This uses the forced power mode to perform a single measurement and
     /// automatically go back to the sleep power mode where the sensor has the
     /// lowest current consumption.
-    pub fn measure(&mut self) -> Result<Measurement, Error<I2C::Error>> {
-        self.apply_power_mode(PowerMode::Forced)?;
+    #[maybe_async_cfg::maybe(
+        sync(not(feature = "async"), keep_self),
+        async(feature = "async", keep_self)
+    )]
+    pub async fn measure(
+        &mut self,
+    ) -> Result<TemperatureAndBarometricPressure<Celcius>, Error<I2C::Error>> {
+        self.apply_power_mode(PowerMode::Forced).await?;
         self.delay.delay_ms(self.get_measurement_duration());
         let mut data = [0u8; 6];
         let mut operations = [Operation::Write(&[PRESS_TXD2]), Operation::Read(&mut data)];
-        self.i2c.transaction(self.address, &mut operations)?;
+        self.i2c.transaction(self.address, &mut operations).await?;
         let dp: &[u8; 3] = &data[0..3].try_into().unwrap();
         let dt: &[u8; 3] = &data[3..6].try_into().unwrap();
         let dp = Self::get_i32_value(dp) - 8_388_608;
         let dt = Self::get_i32_value(dt) - 8_388_608;
         let temperature = self.compensate_temperature(dt);
         let pressure = self.compensate_pressure(dp, temperature);
-        Ok(Measurement {
-            pressure: pressure / 100.0,
-            temperature: temperature / 256.0,
-        })
+        Ok(TemperatureAndBarometricPressure::<Celcius>::new(
+            temperature / 256.0,
+            pressure / 100.0,
+        ))
     }
 
     /// Create a new instance of the QMP6988 device.
-    pub fn new(i2c: I2C, address: SevenBitAddress, delay: D) -> Result<Self, Error<I2C::Error>> {
+    #[maybe_async_cfg::maybe(
+        sync(not(feature = "async"), keep_self),
+        async(feature = "async", keep_self)
+    )]
+    pub async fn new(
+        i2c: I2C,
+        address: SevenBitAddress,
+        delay: D,
+    ) -> Result<Self, Error<I2C::Error>> {
         let mut device = Self {
             address,
             coe: Coe::default(),
@@ -254,44 +264,64 @@ where
             k: K::default(),
             oversampling_setting: OverSamplingSetting::default(),
         };
-        device.check_device()?;
-        device.get_calibration_data()?;
-        device.apply_filter()?;
-        device.apply_measure_control_parameters()?;
+        device.check_device().await?;
+        device.get_calibration_data().await?;
+        device.apply_filter().await?;
+        device.apply_measure_control_parameters().await?;
         Ok(device)
     }
 
     /// Perform a soft reset.
-    pub fn reset(&mut self) -> Result<(), Error<I2C::Error>> {
-        self.i2c.write(self.address, &[RESET_REGISTER])?;
-        self.delay.delay_ms(10);
+    #[maybe_async_cfg::maybe(
+        sync(not(feature = "async"), keep_self),
+        async(feature = "async", keep_self)
+    )]
+    pub async fn reset(&mut self) -> Result<(), Error<I2C::Error>> {
+        self.i2c.write(self.address, &[RESET_REGISTER]).await?;
+        self.delay.delay_ms(10).await;
         Ok(())
     }
 
     /// Define the IIR (Infinite Impulse Response) filter to use during the
     /// measurements.
-    pub fn set_filter(&mut self, filter: IirFilter) -> Result<(), Error<I2C::Error>> {
+    #[maybe_async_cfg::maybe(
+        sync(not(feature = "async"), keep_self),
+        async(feature = "async", keep_self)
+    )]
+    pub async fn set_filter(&mut self, filter: IirFilter) -> Result<(), Error<I2C::Error>> {
         self.filter = filter;
-        self.apply_filter()
+        self.apply_filter().await
     }
 
     /// Define the oversampling setting to use during the measurements.
-    pub fn set_oversampling_setting(
+    #[maybe_async_cfg::maybe(
+        sync(not(feature = "async"), keep_self),
+        async(feature = "async", keep_self)
+    )]
+    pub async fn set_oversampling_setting(
         &mut self,
         oversampling_setting: OverSamplingSetting,
     ) -> Result<(), Error<I2C::Error>> {
         self.oversampling_setting = oversampling_setting;
-        self.apply_measure_control_parameters()
+        self.apply_measure_control_parameters().await
     }
 
-    fn apply_filter(&mut self) -> Result<(), Error<I2C::Error>> {
+    #[maybe_async_cfg::maybe(
+        sync(not(feature = "async"), keep_self),
+        async(feature = "async", keep_self)
+    )]
+    async fn apply_filter(&mut self) -> Result<(), Error<I2C::Error>> {
         let data = [IIR_CNT_REGISTER, self.filter as u8];
-        self.i2c.write(self.address, &data)?;
-        self.delay.delay_ms(20);
+        self.i2c.write(self.address, &data).await?;
+        self.delay.delay_ms(20).await;
         Ok(())
     }
 
-    fn apply_measure_control_parameters(&mut self) -> Result<(), Error<I2C::Error>> {
+    #[maybe_async_cfg::maybe(
+        sync(not(feature = "async"), keep_self),
+        async(feature = "async", keep_self)
+    )]
+    async fn apply_measure_control_parameters(&mut self) -> Result<(), Error<I2C::Error>> {
         let (pressure_oversampling, temperature_oversampling) = self.get_oversamplings();
         let data = [
             CTRL_MEAS_REGISTER,
@@ -299,31 +329,39 @@ where
                 | (pressure_oversampling as u8) << 2
                 | (PowerMode::Sleep as u8),
         ];
-        self.i2c.write(self.address, &data)?;
-        self.delay.delay_ms(20);
+        self.i2c.write(self.address, &data).await?;
+        self.delay.delay_ms(20).await;
         Ok(())
     }
 
-    fn apply_power_mode(&mut self, power_mode: PowerMode) -> Result<(), Error<I2C::Error>> {
+    #[maybe_async_cfg::maybe(
+        sync(not(feature = "async"), keep_self),
+        async(feature = "async", keep_self)
+    )]
+    async fn apply_power_mode(&mut self, power_mode: PowerMode) -> Result<(), Error<I2C::Error>> {
         let mut data = [0u8; 1];
         let mut operations = [
             Operation::Write(&[CTRL_MEAS_REGISTER]),
             Operation::Read(&mut data),
         ];
-        self.i2c.transaction(self.address, &mut operations)?;
+        self.i2c.transaction(self.address, &mut operations).await?;
         let data = [CTRL_MEAS_REGISTER, (data[0] & 0xfc) | power_mode as u8];
-        self.i2c.write(self.address, &data)?;
-        self.delay.delay_ms(20);
+        self.i2c.write(self.address, &data).await?;
+        self.delay.delay_ms(20).await;
         Ok(())
     }
 
-    fn check_device(&mut self) -> Result<(), Error<I2C::Error>> {
+    #[maybe_async_cfg::maybe(
+        sync(not(feature = "async"), keep_self),
+        async(feature = "async", keep_self)
+    )]
+    async fn check_device(&mut self) -> Result<(), Error<I2C::Error>> {
         let mut chip_id = [0u8; 1];
         let mut operations = [
             Operation::Write(&[CHIP_ID_REGISTER]),
             Operation::Read(&mut chip_id),
         ];
-        self.i2c.transaction(self.address, &mut operations)?;
+        self.i2c.transaction(self.address, &mut operations).await?;
         if chip_id[0] == 0x5c {
             Ok(())
         } else {
@@ -349,13 +387,17 @@ where
         self.k.a0 + self.k.a1 * dt + self.k.a2 * dt.powf(2.0)
     }
 
-    fn get_calibration_data(&mut self) -> Result<(), Error<I2C::Error>> {
+    #[maybe_async_cfg::maybe(
+        sync(not(feature = "async"), keep_self),
+        async(feature = "async", keep_self)
+    )]
+    async fn get_calibration_data(&mut self) -> Result<(), Error<I2C::Error>> {
         let mut coe = [0u8; 25];
         let mut operations = [
             Operation::Write(&[COE_B00_1_REGISTER]),
             Operation::Read(&mut coe),
         ];
-        self.i2c.transaction(self.address, &mut operations)?;
+        self.i2c.transaction(self.address, &mut operations).await?;
         self.coe = (&coe).into();
         self.k = (&self.coe).into();
         Ok(())
@@ -385,12 +427,6 @@ where
     fn get_i32_value(data: &[u8; 3]) -> i32 {
         ((data[0] as u32) << 16 | (data[1] as u32) << 8 | (data[2] as u32)) as i32
     }
-}
-
-/// Calculate the altitude (in m) from a measurement.
-pub fn calculate_altitude(measurement: Measurement) -> f32 {
-    ((1_013.25 / measurement.pressure).powf(1.0 / 5.257) - 1.0) * (measurement.temperature + 273.15)
-        / 0.0065
 }
 
 #[cfg(test)]
@@ -423,42 +459,6 @@ mod tests {
         let mut device = Qmp6988::new(i2c, DEFAULT_I2C_ADDRESS, Delay {}).unwrap();
         device.i2c.done();
         device
-    }
-
-    #[test]
-    fn calculate_altitude() {
-        assert!(
-            (crate::calculate_altitude(Measurement {
-                pressure: 991.32,
-                temperature: 20.55,
-            }) - 188.46)
-                .abs()
-                < 0.01
-        );
-        assert!(
-            (crate::calculate_altitude(Measurement {
-                pressure: 1013.25,
-                temperature: 17.93,
-            }) - 0.0)
-                .abs()
-                < 0.01
-        );
-        assert!(
-            (crate::calculate_altitude(Measurement {
-                pressure: 1013.25,
-                temperature: 37.5,
-            }) - 0.0)
-                .abs()
-                < 0.01
-        );
-        assert!(
-            (crate::calculate_altitude(Measurement {
-                pressure: 962.81,
-                temperature: 19.37,
-            }) - 439.25)
-                .abs()
-                < 0.01
-        );
     }
 
     #[test]

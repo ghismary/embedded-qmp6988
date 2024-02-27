@@ -23,6 +23,10 @@ fn main() -> Result<(), embedded_qmp6988::Error<hal::I2CError>> {
 
     // Perform a barometric pressure measurement
     let measurement = sensor.measure()?;
-    println!("Pressure: {:.2} hPa", measurement.pressure);
+    println!(
+        "Pressure: {:.2} hPa, Temperature: {:.2} °C",
+        measurement.barometric_pressure,
+        measurement.temperature.celcius()
+    );
     Ok(())
 }

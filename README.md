@@ -5,9 +5,14 @@
 # embedded-qmp6988
 
 This is a platform agnostic Rust driver the QMP6988 digital barometric pressure
-sensor using the [`embedded-hal`] traits.
+sensor using the [`embedded-hal`] and [`embedded-hal-async`] traits.
 
 [`embedded-hal`]: https://github.com/rust-embedded/embedded-hal
+[`embedded-hal-async`]: https://github.com/rust-embedded/embedded-hal
+
+This driver can be used both synchronously or asynchronously. It defaults to the
+synchronous implementation, but you can switch to the asynchronous one by using
+the `async` feature.
 
 ## The device
 
@@ -34,7 +39,7 @@ I²C interface.
 ## Usage
 
 To use this driver, import what you need from this crate and an `embedded-hal`
-implentation, then instatiate the device.
+implementation, then instantiate the device.
 
 ```rust,no_run
 use embedded_qmp6988::{IirFilter, OverSamplingSetting, Qmp6988, DEFAULT_I2C_ADDRESS};
@@ -62,7 +67,11 @@ fn main() -> Result<(), embedded_qmp6988::Error<hal::I2CError>> {
 
     // Perform a barometric pressure measurement
     let measurement = sensor.measure()?;
-    println!("Pressure: {:.2} hPa", measurement.pressure);
+    println!(
+        "Pressure: {:.2} hPa, Temperature: {:.2} °C",
+        measurement.barometric_pressure,
+        measurement.temperature.celcius()
+    );
     Ok(())
 }
 ```
