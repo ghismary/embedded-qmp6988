@@ -1,5 +1,5 @@
 [![crates.io](https://img.shields.io/crates/v/embedded-qmp6988.svg)](https://crates.io/crates/embedded-qmp6988)
-[![Github status](https://github.com/ghismary/embedded-qmp6988/actions/workflosw/general.yml/badge.svg)](https://github.com/ghismary/embedded-qmp6988)
+[![Github status](https://github.com/ghismary/embedded-qmp6988/actions/workflows/general.yml/badge.svg)](https://github.com/ghismary/embedded-qmp6988)
 [![codecov](https://codecov.io/gh/ghismary/embedded-qmp6988/graph/badge.svg?token=PFNHXQ5915)](https://codecov.io/gh/ghismary/embedded-qmp6988)
 [![License](https://img.shields.io/crates/l/embedded-qmp6988.svg)](https://crates.io/crates/embedded-qmp6988)
 [![Documentation](https://docs.rs/embedded-qmp6988/badge.svg)](https://docs.rs/embedded-qmp6988)
