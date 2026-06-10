@@ -4,7 +4,6 @@
 
 #[allow(unused_imports)]
 use micromath::F32Ext;
-use weather_utils::{Celsius, TemperatureAndBarometricPressure};
 
 #[cfg(not(feature = "async"))]
 use embedded_hal as hal;
@@ -12,6 +11,9 @@ use embedded_hal as hal;
 use embedded_hal_async as hal;
 
 use hal::i2c::{Operation, SevenBitAddress};
+
+pub use weather_utils::Temperature;
+use weather_utils::{Celsius, TemperatureAndBarometricPressure};
 
 /// The I2C address when the SDO pin is connected to logic low
 pub const I2C_ADDRESS_LOGIC_LOW: SevenBitAddress = 0x70;
