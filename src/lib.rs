@@ -4,7 +4,7 @@
 
 #[allow(unused_imports)]
 use micromath::F32Ext;
-use weather_utils::{unit::Celcius, TemperatureAndBarometricPressure};
+use weather_utils::{Celsius, TemperatureAndBarometricPressure};
 
 #[cfg(not(feature = "async"))]
 use embedded_hal as hal;
@@ -227,7 +227,7 @@ where
     )]
     pub async fn measure(
         &mut self,
-    ) -> Result<TemperatureAndBarometricPressure<Celcius>, Error<I2C::Error>> {
+    ) -> Result<TemperatureAndBarometricPressure<Celsius>, Error<I2C::Error>> {
         self.apply_power_mode(PowerMode::Forced).await?;
         self.delay.delay_ms(self.get_measurement_duration());
         let mut data = [0u8; 6];
@@ -239,10 +239,10 @@ where
         let dt = Self::get_i32_value(dt) - 8_388_608;
         let temperature = self.compensate_temperature(dt);
         let pressure = self.compensate_pressure(dp, temperature);
-        Ok(TemperatureAndBarometricPressure::<Celcius>::new(
-            temperature / 256.0,
-            pressure / 100.0,
-        ))
+        Ok(TemperatureAndBarometricPressure {
+            temperature: Celsius(temperature / 256.0),
+            barometric_pressure: pressure / 100.0,
+        })
     }
 
     /// Create a new instance of the QMP6988 device.
