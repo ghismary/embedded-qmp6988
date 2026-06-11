@@ -231,7 +231,7 @@ where
         &mut self,
     ) -> Result<TemperatureAndBarometricPressure<Celsius>, Error<I2C::Error>> {
         self.apply_power_mode(PowerMode::Forced).await?;
-        self.delay.delay_ms(self.get_measurement_duration());
+        self.delay.delay_ms(self.get_measurement_duration()).await;
         let mut data = [0u8; 6];
         let mut operations = [Operation::Write(&[PRESS_TXD2]), Operation::Read(&mut data)];
         self.i2c.transaction(self.address, &mut operations).await?;
