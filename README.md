@@ -72,7 +72,7 @@ mod linux {
         let measurement = sensor.measure()?;
         println!(
             "Pressure: {:.2} hPa, Temperature: {:.2} °C",
-            measurement.barometric_pressure,
+            measurement.barometric_pressure.value(),
             measurement.temperature.celsius().value()
         );
         Ok(())
