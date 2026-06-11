@@ -433,9 +433,14 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::*;
+    use embedded_hal::i2c::ErrorKind;
     use embedded_hal_mock::eh1::delay::StdSleep as Delay;
     use embedded_hal_mock::eh1::i2c::{Mock as I2cMock, Transaction as I2cTransaction};
+    use rstest::rstest;
+
+    use weather_utils::Altitude;
+
+    use crate::*;
 
     fn create_device() -> Qmp6988<I2cMock, Delay> {
         let expectations = [
@@ -448,8 +453,8 @@ mod tests {
             I2cTransaction::read(
                 DEFAULT_I2C_ADDRESS,
                 [
-                    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
-                    0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+                    0x48, 0xE3, 0xF7, 0xD5, 0x04, 0x50, 0xFD, 0x02, 0xF3, 0xCB, 0x0A, 0x5D, 0x1F,
+                    0x8C, 0x09, 0x13, 0xF9, 0xB6, 0xF7, 0x68, 0xD1, 0x62, 0xEB, 0xF2, 0x4E,
                 ]
                 .to_vec(),
             ),
@@ -464,6 +469,22 @@ mod tests {
     }
 
     #[test]
+    fn chip_not_detected() {
+        let expectations = [
+            I2cTransaction::transaction_start(DEFAULT_I2C_ADDRESS),
+            I2cTransaction::write(DEFAULT_I2C_ADDRESS, [CHIP_ID_REGISTER].to_vec()),
+            I2cTransaction::read(DEFAULT_I2C_ADDRESS, [0x2a].to_vec()),
+            I2cTransaction::transaction_end(DEFAULT_I2C_ADDRESS),
+        ];
+        let mut i2c = I2cMock::new(&expectations);
+        assert!(matches!(
+            Qmp6988::new(i2c.by_ref(), DEFAULT_I2C_ADDRESS, Delay {}),
+            Err(Error::ChipNotDetected)
+        ));
+        i2c.done();
+    }
+
+    #[test]
     fn measure() {
         let expectations = [
             I2cTransaction::transaction_start(DEFAULT_I2C_ADDRESS),
@@ -475,13 +496,23 @@ mod tests {
             I2cTransaction::write(DEFAULT_I2C_ADDRESS, [PRESS_TXD2].to_vec()),
             I2cTransaction::read(
                 DEFAULT_I2C_ADDRESS,
-                [0x00, 0x01, 0x02, 0x00, 0x01, 0x02].to_vec(),
+                [0xA4, 0x92, 0xF1, 0x6E, 0x0D, 0x98].to_vec(),
             ),
             I2cTransaction::transaction_end(DEFAULT_I2C_ADDRESS),
         ];
         let mut device = create_device();
         device.i2c.update_expectations(&expectations);
-        device.measure().unwrap();
+        let measure = device.measure();
+        assert!(matches!(measure, Ok(_)));
+        let measure = measure.unwrap();
+        assert_eq!(
+            measure,
+            TemperatureAndBarometricPressure {
+                temperature: Celsius(20.87),
+                barometric_pressure: BarometricPressure(981.19),
+            }
+        );
+        assert_eq!(measure.altitude(), Altitude(277.31));
         device.i2c.done();
     }
 
@@ -493,7 +524,19 @@ mod tests {
         )];
         let mut device = create_device();
         device.i2c.update_expectations(&expectations);
-        device.reset().unwrap();
+        assert!(matches!(device.reset(), Ok(())));
+        device.i2c.done();
+    }
+
+    #[test]
+    fn reset_with_arbitration_loss_error() {
+        let expectations = [
+            I2cTransaction::write(DEFAULT_I2C_ADDRESS, [RESET_REGISTER].to_vec())
+                .with_error(ErrorKind::ArbitrationLoss),
+        ];
+        let mut device = create_device();
+        device.i2c.update_expectations(&expectations);
+        assert!(matches!(device.reset(), Err(Error::I2c(_))));
         device.i2c.done();
     }
 
@@ -505,21 +548,35 @@ mod tests {
         )];
         let mut device = create_device();
         device.i2c.update_expectations(&expectations);
-        device.set_filter(IirFilter::Coeff32).unwrap();
+        assert!(matches!(device.set_filter(IirFilter::Coeff32), Ok(())));
         device.i2c.done();
     }
 
-    #[test]
-    fn set_oversampling_setting() {
+    #[rstest]
+    #[case(OverSamplingSetting::HighSpeed, 0x28, 6)]
+    #[case(OverSamplingSetting::LowPower, 0x2C, 8)]
+    #[case(OverSamplingSetting::Standard, 0x30, 11)]
+    #[case(OverSamplingSetting::HighAccuracy, 0x54, 19)]
+    #[case(OverSamplingSetting::UltraHighAccuracy, 0x78, 34)]
+    fn set_oversampling_setting(
+        #[case] oversampling_setting: OverSamplingSetting,
+        #[case] expected_ctrl_meas_value: u8,
+        #[case] expected_measurement_duration: u32,
+    ) {
         let expectations = [I2cTransaction::write(
             DEFAULT_I2C_ADDRESS,
-            [CTRL_MEAS_REGISTER, 0x28].to_vec(),
+            [CTRL_MEAS_REGISTER, expected_ctrl_meas_value].to_vec(),
         )];
         let mut device = create_device();
         device.i2c.update_expectations(&expectations);
-        device
-            .set_oversampling_setting(OverSamplingSetting::HighSpeed)
-            .unwrap();
+        assert!(matches!(
+            device.set_oversampling_setting(oversampling_setting),
+            Ok(())
+        ));
+        assert_eq!(
+            device.get_measurement_duration(),
+            expected_measurement_duration
+        );
         device.i2c.done();
     }
 }
