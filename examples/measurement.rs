@@ -28,9 +28,10 @@ mod linux {
         // Perform a barometric pressure measurement
         let measurement = sensor.measure()?;
         println!(
-            "Pressure: {:.2} hPa, Temperature: {:.2} °C",
-            measurement.barometric_pressure,
-            measurement.temperature.celsius().value()
+            "Pressure: {:.2} hPa, Temperature: {:.2} °C, Altitude: {:.2} m",
+            measurement.barometric_pressure.value(),
+            measurement.temperature.celsius().value(),
+            measurement.altitude().value(),
         );
         Ok(())
     }
